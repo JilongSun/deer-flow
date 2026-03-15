@@ -5,6 +5,7 @@
     }
   ],
   "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
     "python-envs.pythonProjects": [
       {
         "path": "backend",
@@ -22,6 +23,7 @@
         "type": "debugpy",
         "request": "launch",
         "program": "${workspaceFolder}/backend/debug.py",
+        "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
         "console": "integratedTerminal",
         "cwd": "${workspaceFolder}/backend",
         "env": {
@@ -34,6 +36,7 @@
         "type": "debugpy",
         "request": "launch",
         "program": "${workspaceFolder}/backend/debug.py",
+        "python": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
         "console": "integratedTerminal",
         "cwd": "${workspaceFolder}/backend",
         "env": {
