@@ -23,7 +23,7 @@ def setup_agent(
         soul: Full SOUL.md content defining the agent's personality and behavior.
         description: One-line description of what the agent does.
     """
-
+    logger.info('开始调用setup_agent工具')
     agent_name: str | None = runtime.context.get("agent_name")
 
     try:

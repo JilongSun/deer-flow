@@ -265,7 +265,7 @@ def make_lead_agent(config: RunnableConfig):
     from deerflow.tools.builtins import setup_agent
 
     cfg = config.get("configurable", {})
-
+    logger.info(f"Making lead agent with config: {cfg}")
     thinking_enabled = cfg.get("thinking_enabled", True)
     reasoning_effort = cfg.get("reasoning_effort", None)
     requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
@@ -319,6 +319,7 @@ def make_lead_agent(config: RunnableConfig):
 
     if is_bootstrap:
         # Special bootstrap agent with minimal prompt for initial custom agent creation flow
+        logger.info(f"Creating bootstrap agent with model '{model_name}'")
         return create_agent(
             model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
             tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled) + [setup_agent],
@@ -328,6 +329,7 @@ def make_lead_agent(config: RunnableConfig):
         )
 
     # Default lead agent (unchanged behavior)
+    logger.info(f"Creating default lead agent with model '{model_name}', without bootstrap")
     return create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort),
         tools=get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled),
