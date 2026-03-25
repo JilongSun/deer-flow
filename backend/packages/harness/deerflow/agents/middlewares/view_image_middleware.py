@@ -91,7 +91,7 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         # Check if all tool calls have been completed
         return tool_call_ids.issubset(completed_tool_ids)
 
-    def _create_image_details_message(self, state: ViewImageMiddlewareState) -> list[str | dict]:
+    def _create_image_details_message(self, state: ViewImageMiddlewareState) -> list[dict[str, object]]:
         """Create a formatted message with all viewed image details.
 
         Args:
@@ -105,7 +105,7 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
             return [{"type": "text", "text": "No images have been viewed."}]
 
         # Build the message with image information
-        content_blocks: list[str | dict] = [{"type": "text", "text": "Here are the images you've viewed:"}]
+        content_blocks: list[dict[str, object]] = [{"type": "text", "text": "Here are the images you've viewed:"}]
 
         for image_path, image_data in viewed_images.items():
             mime_type = image_data.get("mime_type", "unknown")
