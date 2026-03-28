@@ -8,8 +8,9 @@ import mimetypes
 import re
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
+from app.channels.base import Channel
 from app.channels.message_bus import InboundMessage, InboundMessageType, MessageBus, OutboundMessage, ResolvedAttachment
 from app.channels.store import ChannelStore
 
@@ -55,14 +56,9 @@ def _normalize_custom_agent_name(raw_value: str) -> str:
     """Normalize legacy channel assistant IDs into valid custom agent names."""
     normalized = raw_value.strip().lower().replace("_", "-")
     if not normalized:
-        raise InvalidChannelSessionConfigError(
-            "Channel session assistant_id is empty. Use 'lead_agent' or a valid custom agent name."
-        )
+        raise InvalidChannelSessionConfigError("Channel session assistant_id is empty. Use 'lead_agent' or a valid custom agent name.")
     if not CUSTOM_AGENT_NAME_PATTERN.fullmatch(normalized):
-        raise InvalidChannelSessionConfigError(
-            f"Invalid channel session assistant_id {raw_value!r}. "
-            "Use 'lead_agent' or a custom agent name containing only letters, digits, and hyphens."
-        )
+        raise InvalidChannelSessionConfigError(f"Invalid channel session assistant_id {raw_value!r}. Use 'lead_agent' or a custom agent name containing only letters, digits, and hyphens.")
     return normalized
 
 
@@ -409,6 +405,52 @@ class ChannelManager:
 
         return assistant_id, run_config, run_context
 
+    async def _prepare_feishu_file_context(self, msg: InboundMessage, thread_id: str) -> str:
+        """Download Feishu inbound files and prepend virtual paths to user text."""
+        if msg.channel_name != "feishu":
+            return msg.text
+
+        file_keys: list[str] = []
+        for item in msg.files:
+            if isinstance(item, dict):
+                file_key = item.get("file_key")
+                if isinstance(file_key, str) and file_key:
+                    file_keys.append(file_key)
+
+        if not file_keys:
+            return msg.text
+
+        try:
+            from app.channels.service import get_channel_service
+
+            service = get_channel_service()
+            feishu_channel = service.get_channel("feishu") if service else None
+        except Exception:
+            logger.exception("[Manager] failed to access feishu channel service")
+            return msg.text
+
+        if feishu_channel is None:
+            logger.warning("[Manager] feishu channel unavailable, skip image materialization")
+            return msg.text
+
+        virtual_paths: list[str] = []
+        for file_key in file_keys:
+            try:
+                virtual_path = await feishu_channel.receive_file(thread_id, file_key)
+            except Exception:
+                logger.exception("[Manager] failed to materialize feishu file: %s", file_key)
+                continue
+            if isinstance(virtual_path, str) and virtual_path:
+                virtual_paths.append(virtual_path)
+
+        if not virtual_paths:
+            return msg.text
+
+        lines = ["User sent files available in the sandbox:"]
+        lines.extend(f"- {path}" for path in virtual_paths)
+        file_context = "\n".join(lines)
+        return f"{file_context}\n\n{msg.text}" if msg.text else file_context
+
     # -- LangGraph SDK client (lazy) ----------------------------------------
 
     def _get_client(self):
@@ -527,6 +569,18 @@ class ChannelManager:
             thread_id = await self._create_thread(client, msg)
 
         assistant_id, run_config, run_context = self._resolve_run_params(msg, thread_id)
+
+        # If the inbound message contains file attachments, let the channel
+        # materialize (download) them and update msg.text to include sandbox file paths.
+        # This enables downstream models to access user-uploaded files by path.
+        # Channels that do not support file download will simply return the original message.
+        if msg.files:
+            from .service import get_channel_service
+
+            service = get_channel_service()
+            channel = cast("Channel", service.get_channel(msg.channel_name)) if service else None
+            logger.info("[Manager] preparing receive file context for %d attachments", len(msg.files))
+            msg = await channel.receive_file(msg, thread_id) if channel else msg
         if extra_context:
             run_context.update(extra_context)
         if self._channel_supports_streaming(msg.channel_name):
