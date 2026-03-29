@@ -336,8 +336,8 @@ class FeishuChannel(Channel):
         resolved_target = uploads_dir / filename
 
         try:
-            resolved_target.write_bytes(content)
-        except OSError:
+            await asyncio.to_thread(lambda: resolved_target.write_bytes(content))
+        except Exception:
             logger.exception("[Feishu] failed to persist downloaded image: %s", resolved_target)
             return f"Failed to obtain the [{type}]"
 
