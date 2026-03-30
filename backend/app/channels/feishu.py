@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 from typing import Any, Literal
 
@@ -336,7 +337,8 @@ class FeishuChannel(Channel):
         paths.ensure_thread_dirs(thread_id)
         uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
 
-        filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
+        raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
+        filename = re.sub(r"[./\\]", "_", raw_filename)
         resolved_target = uploads_dir / filename
 
         try:
