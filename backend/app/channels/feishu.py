@@ -303,13 +303,14 @@ class FeishuChannel(Channel):
         try:
             response = await asyncio.to_thread(inner)
         except Exception:
-            logger.exception("[Feishu] image get request failed for image_key=%s", file_key)
+            logger.exception("[Feishu] resource get request failed for resource_key=%s type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         if not response.success():
             logger.warning(
-                "[Feishu] image get failed: image_key=%s, code=%s, msg=%s, log_id=%s",
+                "[Feishu] resource get failed: resource_key=%s, type=%s, code=%s, msg=%s, log_id=%s ",
                 file_key,
+                type,
                 response.code,
                 response.msg,
                 response.get_log_id(),
@@ -318,17 +319,17 @@ class FeishuChannel(Channel):
 
         image_stream = getattr(response, "file", None)
         if image_stream is None:
-            logger.warning("[Feishu] image get returned no file stream: image_key=%s", file_key)
+            logger.warning("[Feishu] resource get returned no file stream: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         try:
             content: bytes = await asyncio.to_thread(image_stream.read)
         except Exception:
-            logger.exception("[Feishu] failed to read image stream: image_key=%s", file_key)
+            logger.exception("[Feishu] failed to read resource stream: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         if not content:
-            logger.warning("[Feishu] empty image content: image_key=%s", file_key)
+            logger.warning("[Feishu] empty resource content: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         paths = get_paths()
@@ -341,7 +342,7 @@ class FeishuChannel(Channel):
         try:
             await asyncio.to_thread(lambda: resolved_target.write_bytes(content))
         except Exception:
-            logger.exception("[Feishu] failed to persist downloaded image: %s", resolved_target)
+            logger.exception("[Feishu] failed to persist downloaded resource: %s, type=%s", resolved_target, type)
             return f"Failed to obtain the [{type}]"
 
         virtual_path = f"{VIRTUAL_PATH_PREFIX}/uploads/{resolved_target.name}"
@@ -356,10 +357,10 @@ class FeishuChannel(Channel):
                     return f"Failed to obtain the [{type}]"
                 sandbox.update_file(virtual_path, content)
         except Exception:
-            logger.exception("[Feishu] failed to sync image into non-local sandbox: %s", virtual_path)
+            logger.exception("[Feishu] failed to sync resource into non-local sandbox: %s", virtual_path)
             return f"Failed to obtain the [{type}]"
 
-        logger.info("[Feishu] downloaded image mapped: file_key=%s -> %s", file_key, virtual_path)
+        logger.info("[Feishu] downloaded resource mapped: file_key=%s -> %s", file_key, virtual_path)
         return virtual_path
 
     # -- message formatting ------------------------------------------------
