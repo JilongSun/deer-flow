@@ -416,52 +416,6 @@ class ChannelManager:
 
         return assistant_id, run_config, run_context
 
-    async def _prepare_feishu_file_context(self, msg: InboundMessage, thread_id: str) -> str:
-        """Download Feishu inbound files and prepend virtual paths to user text."""
-        if msg.channel_name != "feishu":
-            return msg.text
-
-        file_keys: list[str] = []
-        for item in msg.files:
-            if isinstance(item, dict):
-                file_key = item.get("file_key")
-                if isinstance(file_key, str) and file_key:
-                    file_keys.append(file_key)
-
-        if not file_keys:
-            return msg.text
-
-        try:
-            from app.channels.service import get_channel_service
-
-            service = get_channel_service()
-            feishu_channel = service.get_channel("feishu") if service else None
-        except Exception:
-            logger.exception("[Manager] failed to access feishu channel service")
-            return msg.text
-
-        if feishu_channel is None:
-            logger.warning("[Manager] feishu channel unavailable, skip image materialization")
-            return msg.text
-
-        virtual_paths: list[str] = []
-        for file_key in file_keys:
-            try:
-                virtual_path = await feishu_channel.receive_file(thread_id, file_key)
-            except Exception:
-                logger.exception("[Manager] failed to materialize feishu file: %s", file_key)
-                continue
-            if isinstance(virtual_path, str) and virtual_path:
-                virtual_paths.append(virtual_path)
-
-        if not virtual_paths:
-            return msg.text
-
-        lines = ["User sent files available in the sandbox:"]
-        lines.extend(f"- {path}" for path in virtual_paths)
-        file_context = "\n".join(lines)
-        return f"{file_context}\n\n{msg.text}" if msg.text else file_context
-
     # -- LangGraph SDK client (lazy) ----------------------------------------
 
     def _get_client(self):

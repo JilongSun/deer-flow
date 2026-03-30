@@ -93,7 +93,7 @@ class FeishuChannel(Channel):
         self._CreateFileRequestBody = CreateFileRequestBody
         self._CreateImageRequest = CreateImageRequest
         self._CreateImageRequestBody = CreateImageRequestBody
-        self.GetMessageResourceRequest = GetMessageResourceRequest
+        self._GetMessageResourceRequest = GetMessageResourceRequest
 
         app_id = self.config.get("app_id", "")
         app_secret = self.config.get("app_secret", "")
@@ -295,7 +295,7 @@ class FeishuChannel(Channel):
         return msg
 
     async def _receive_single_file(self, message_id: str, file_key: str, type: Literal["image", "file"], thread_id: str) -> str:
-        request = self.GetMessageResourceRequest.builder().message_id(message_id).file_key(file_key).type(type).build()
+        request = self._GetMessageResourceRequest.builder().message_id(message_id).file_key(file_key).type(type).build()
 
         def inner():
             return self._api_client.im.v1.message_resource.get(request)
@@ -335,7 +335,7 @@ class FeishuChannel(Channel):
         paths.ensure_thread_dirs(thread_id)
         uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
 
-        filename = getattr(response, "file_name", "") or f"feishu_{file_key[12:]}.png"
+        filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
         resolved_target = uploads_dir / filename
 
         try:
