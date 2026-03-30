@@ -338,7 +338,13 @@ class FeishuChannel(Channel):
         uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
 
         raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
-        filename = re.sub(r"[./\\]", "_", raw_filename)
+        # Sanitize filename: preserve extension, replace path chars in name part
+        if "." in raw_filename:
+            name_part, ext = raw_filename.rsplit(".", 1)
+            name_part = re.sub(r"[./\\]", "_", name_part)
+            filename = f"{name_part}.{ext}"
+        else:
+            filename = re.sub(r"[./\\]", "_", raw_filename)
         resolved_target = uploads_dir / filename
 
         try:
@@ -577,18 +583,18 @@ class FeishuChannel(Channel):
             if "text" in content:
                 # Handle plain text messages
                 text = content["text"]
-            elif "image_key" in content:
-                image_key = content.get("image_key")
-                if isinstance(image_key, str) and image_key:
-                    image_keys.append(image_key)
-                    text = "[image]"
-                else:
-                    text = ""
             elif "file_key" in content:
                 file_key = content.get("file_key")
                 if isinstance(file_key, str) and file_key:
                     file_keys.append(file_key)
                     text = "[file]"
+                else:
+                    text = ""
+            elif "image_key" in content:
+                image_key = content.get("image_key")
+                if isinstance(image_key, str) and image_key:
+                    image_keys.append(image_key)
+                    text = "[image]"
                 else:
                     text = ""
             elif "content" in content and isinstance(content["content"], list):
@@ -609,7 +615,7 @@ class FeishuChannel(Channel):
                                     if isinstance(image_key, str) and image_key:
                                         image_keys.append(image_key)
                                         paragraph_text_parts.append("[image]")
-                                elif element.get("tag") == "file":
+                                elif element.get("tag") in ("file", "media"):
                                     file_key = element.get("file_key")
                                     if isinstance(file_key, str) and file_key:
                                         file_keys.append(file_key)
