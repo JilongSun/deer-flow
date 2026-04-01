@@ -53,6 +53,7 @@ class FeishuChannel(Channel):
         self._CreateImageRequest = None
         self._CreateImageRequestBody = None
         self._GetMessageResourceRequest = None
+        self._thread_lock = threading.Lock()
 
     async def start(self) -> None:
         if self._running:
@@ -347,8 +348,13 @@ class FeishuChannel(Channel):
             filename = re.sub(r"[./\\]", "_", raw_filename)
         resolved_target = uploads_dir / filename
 
+        def down_load():
+            # use thread_lock to avoid filename conflicts when writing
+            with self._thread_lock:
+                resolved_target.write_bytes(content)
+
         try:
-            await asyncio.to_thread(lambda: resolved_target.write_bytes(content))
+            await asyncio.to_thread(down_load)
         except Exception:
             logger.exception("[Feishu] failed to persist downloaded resource: %s, type=%s", resolved_target, type)
             return f"Failed to obtain the [{type}]"
