@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 from typing import Any, Literal
 
@@ -52,6 +53,7 @@ class FeishuChannel(Channel):
         self._CreateImageRequest = None
         self._CreateImageRequestBody = None
         self._GetMessageResourceRequest = None
+        self._thread_lock = threading.Lock()
 
     async def start(self) -> None:
         if self._running:
@@ -303,13 +305,14 @@ class FeishuChannel(Channel):
         try:
             response = await asyncio.to_thread(inner)
         except Exception:
-            logger.exception("[Feishu] image get request failed for image_key=%s", file_key)
+            logger.exception("[Feishu] resource get request failed for resource_key=%s type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         if not response.success():
             logger.warning(
-                "[Feishu] image get failed: image_key=%s, code=%s, msg=%s, log_id=%s",
+                "[Feishu] resource get failed: resource_key=%s, type=%s, code=%s, msg=%s, log_id=%s ",
                 file_key,
+                type,
                 response.code,
                 response.msg,
                 response.get_log_id(),
@@ -318,30 +321,42 @@ class FeishuChannel(Channel):
 
         image_stream = getattr(response, "file", None)
         if image_stream is None:
-            logger.warning("[Feishu] image get returned no file stream: image_key=%s", file_key)
+            logger.warning("[Feishu] resource get returned no file stream: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         try:
             content: bytes = await asyncio.to_thread(image_stream.read)
         except Exception:
-            logger.exception("[Feishu] failed to read image stream: image_key=%s", file_key)
+            logger.exception("[Feishu] failed to read resource stream: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         if not content:
-            logger.warning("[Feishu] empty image content: image_key=%s", file_key)
+            logger.warning("[Feishu] empty resource content: resource_key=%s, type=%s", file_key, type)
             return f"Failed to obtain the [{type}]"
 
         paths = get_paths()
         paths.ensure_thread_dirs(thread_id)
         uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
 
-        filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
+        raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
+        # Sanitize filename: preserve extension, replace path chars in name part
+        if "." in raw_filename:
+            name_part, ext = raw_filename.rsplit(".", 1)
+            name_part = re.sub(r"[./\\]", "_", name_part)
+            filename = f"{name_part}.{ext}"
+        else:
+            filename = re.sub(r"[./\\]", "_", raw_filename)
         resolved_target = uploads_dir / filename
 
+        def down_load():
+            # use thread_lock to avoid filename conflicts when writing
+            with self._thread_lock:
+                resolved_target.write_bytes(content)
+
         try:
-            await asyncio.to_thread(lambda: resolved_target.write_bytes(content))
+            await asyncio.to_thread(down_load)
         except Exception:
-            logger.exception("[Feishu] failed to persist downloaded image: %s", resolved_target)
+            logger.exception("[Feishu] failed to persist downloaded resource: %s, type=%s", resolved_target, type)
             return f"Failed to obtain the [{type}]"
 
         virtual_path = f"{VIRTUAL_PATH_PREFIX}/uploads/{resolved_target.name}"
@@ -356,10 +371,10 @@ class FeishuChannel(Channel):
                     return f"Failed to obtain the [{type}]"
                 sandbox.update_file(virtual_path, content)
         except Exception:
-            logger.exception("[Feishu] failed to sync image into non-local sandbox: %s", virtual_path)
+            logger.exception("[Feishu] failed to sync resource into non-local sandbox: %s", virtual_path)
             return f"Failed to obtain the [{type}]"
 
-        logger.info("[Feishu] downloaded image mapped: file_key=%s -> %s", file_key, virtual_path)
+        logger.info("[Feishu] downloaded resource mapped: file_key=%s -> %s", file_key, virtual_path)
         return virtual_path
 
     # -- message formatting ------------------------------------------------
@@ -574,18 +589,18 @@ class FeishuChannel(Channel):
             if "text" in content:
                 # Handle plain text messages
                 text = content["text"]
-            elif "image_key" in content:
-                image_key = content.get("image_key")
-                if isinstance(image_key, str) and image_key:
-                    image_keys.append(image_key)
-                    text = "[image]"
-                else:
-                    text = ""
             elif "file_key" in content:
                 file_key = content.get("file_key")
                 if isinstance(file_key, str) and file_key:
                     file_keys.append(file_key)
                     text = "[file]"
+                else:
+                    text = ""
+            elif "image_key" in content:
+                image_key = content.get("image_key")
+                if isinstance(image_key, str) and image_key:
+                    image_keys.append(image_key)
+                    text = "[image]"
                 else:
                     text = ""
             elif "content" in content and isinstance(content["content"], list):
@@ -606,7 +621,7 @@ class FeishuChannel(Channel):
                                     if isinstance(image_key, str) and image_key:
                                         image_keys.append(image_key)
                                         paragraph_text_parts.append("[image]")
-                                elif element.get("tag") == "file":
+                                elif element.get("tag") in ("file", "media"):
                                     file_key = element.get("file_key")
                                     if isinstance(file_key, str) and file_key:
                                         file_keys.append(file_key)

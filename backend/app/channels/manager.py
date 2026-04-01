@@ -8,11 +8,10 @@ import mimetypes
 import re
 import time
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 from langgraph_sdk.errors import ConflictError
 
-from app.channels.base import Channel
 from app.channels.message_bus import InboundMessage, InboundMessageType, MessageBus, OutboundMessage, ResolvedAttachment
 from app.channels.store import ChannelStore
 
@@ -543,7 +542,7 @@ class ChannelManager:
             from .service import get_channel_service
 
             service = get_channel_service()
-            channel = cast("Channel", service.get_channel(msg.channel_name)) if service else None
+            channel = service.get_channel(msg.channel_name) if service else None
             logger.info("[Manager] preparing receive file context for %d attachments", len(msg.files))
             msg = await channel.receive_file(msg, thread_id) if channel else msg
         if extra_context:
