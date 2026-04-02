@@ -10,11 +10,18 @@ import threading
 from typing import Any, Literal
 
 from app.channels.base import Channel
+from app.channels.commands import KNOWN_CHANNEL_COMMANDS
 from app.channels.message_bus import InboundMessage, InboundMessageType, MessageBus, OutboundMessage, ResolvedAttachment
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _is_feishu_command(text: str) -> bool:
+    if not text.startswith("/"):
+        return False
+    return text.split(maxsplit=1)[0].lower() in KNOWN_CHANNEL_COMMANDS
 
 
 class FeishuChannel(Channel):
@@ -649,8 +656,9 @@ class FeishuChannel(Channel):
                 logger.info("[Feishu] empty text, ignoring message")
                 return
 
-            # Check if it's a command
-            if text.startswith("/"):
+            # Only treat known slash commands as commands; absolute paths and
+            # other slash-prefixed text should be handled as normal chat.
+            if _is_feishu_command(text):
                 msg_type = InboundMessageType.COMMAND
             else:
                 msg_type = InboundMessageType.CHAT
