@@ -18,17 +18,17 @@ logger = logging.getLogger(__name__)
 
 
 class McpPathRewriteMiddleware(AgentMiddleware[ThreadState]):
-    """Rewrite virtual paths (/mnt/user-data/...) to actual paths in MCP tool args.
-    
-    Scans tool arguments for 'media_input' field containing virtual paths and
-    converts them to actual filesystem paths before MCP execution.
+    """Rewrite virtual paths to actual paths in MCP tool args.
+
+    Scans all tool arguments recursively and converts values starting waith
+    /mnt/user-data (or mnt/user-data) to actual filesystem paths.
     """
 
     state_schema = ThreadState
 
     def __init__(self, mcp_tool_prefixes: list[str] | None = None):
         """Initialize middleware.
-        
+
         Args:
             mcp_tool_prefixes: Tool name prefixes to target (e.g., ["videoflow-mcp"]).
         """
@@ -42,27 +42,34 @@ class McpPathRewriteMiddleware(AgentMiddleware[ThreadState]):
 
     def _rewrite_path(self, path: str, thread_id: str) -> str:
         """Convert virtual path to actual path."""
-        if not path.startswith("/mnt/user-data/"):
+        normalized_path = path
+        if path.startswith("mnt/user-data"):
+            normalized_path = f"/{path}"
+
+        if not normalized_path.startswith("/mnt/user-data"):
             return path
         try:
-            return str(get_paths().resolve_virtual_path(thread_id, path))
+            rpath = str(get_paths().resolve_virtual_path(thread_id, normalized_path))
+            logger.info(f"[McpPathRewrite] Rewrote {path} to {rpath}")
+            return rpath
         except Exception as e:
             logger.warning(f"Failed to resolve path {path}: {e}")
             return path
 
-    def _rewrite_media_input(self, obj: Any, thread_id: str) -> Any:
-        """Recursively rewrite media_input field in args."""
+    def _rewrite_virtual_paths(self, obj: Any, thread_id: str) -> Any:
+        """Recursively rewrite all virtual path values in args."""
         if isinstance(obj, str):
             return self._rewrite_path(obj, thread_id)
         if isinstance(obj, list):
-            return [self._rewrite_media_input(v, thread_id) for v in obj]
+            return [self._rewrite_virtual_paths(v, thread_id) for v in obj]
+        if isinstance(obj, tuple):
+            return tuple(self._rewrite_virtual_paths(v, thread_id) for v in obj)
         if isinstance(obj, dict):
-            return {k: self._rewrite_media_input(v, thread_id) if k == "media_input" else v 
-                    for k, v in obj.items()}
+            return {k: self._rewrite_virtual_paths(v, thread_id) for k, v in obj.items()}
         return obj
 
     def _rewrite_args_if_needed(self, request: ToolCallRequest) -> None:
-        """Rewrite media_input paths in tool arguments."""
+        """Rewrite virtual paths in tool arguments."""
         tool_name = str(request.tool_call.get("name") or "")
         if not self._is_target_mcp_tool(tool_name):
             return
@@ -73,10 +80,10 @@ class McpPathRewriteMiddleware(AgentMiddleware[ThreadState]):
         if not thread_id:
             return
 
-        args = request.tool_call.get("args") or {}
-        if "media_input" in args:
-            args["media_input"] = self._rewrite_media_input(args["media_input"], thread_id)
-            logger.info(f"[McpPathRewrite] Rewrote media_input for {tool_name}")
+        args = request.tool_call.get("args")
+        if isinstance(args, dict):
+            request.tool_call["args"] = self._rewrite_virtual_paths(args, thread_id)
+            logger.info(f"[McpPathRewrite] Rewrote virtual paths for {tool_name}")
 
     @override
     def wrap_tool_call(

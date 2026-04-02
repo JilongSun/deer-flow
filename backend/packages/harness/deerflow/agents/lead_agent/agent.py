@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from deerflow.agents.lead_agent.prompt import apply_prompt_template
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
+from deerflow.agents.middlewares.mcp_path_rewrite_middleware import McpPathRewriteMiddleware
 from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
 from deerflow.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
 from deerflow.agents.middlewares.title_middleware import TitleMiddleware
@@ -264,6 +265,10 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
     # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
         middlewares.extend(custom_middlewares)
+
+    # McpPathRewriteMiddleware should be near the end to rewrite MCP args
+    # after other general middlewares have finished preprocessing.
+    middlewares.append(McpPathRewriteMiddleware(mcp_tool_prefixes=["videoflow-mcp"]))
 
     # ClarificationMiddleware should always be last
     middlewares.append(ClarificationMiddleware())
