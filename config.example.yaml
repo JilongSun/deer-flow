@@ -325,6 +325,16 @@ tools:
     group: file:read
     use: deerflow.sandbox.tools:read_file_tool
 
+  - name: glob
+    group: file:read
+    use: deerflow.sandbox.tools:glob_tool
+    max_results: 200
+
+  - name: grep
+    group: file:read
+    use: deerflow.sandbox.tools:grep_tool
+    max_results: 100
+
   - name: write_file
     group: file:write
     use: deerflow.sandbox.tools:write_file_tool
@@ -483,6 +493,12 @@ skills:
   # This is used by the agent to access skills in both local and Docker sandbox
   # Default: /mnt/skills
   container_path: /mnt/skills
+
+# Note: To restrict which skills are loaded for a specific custom agent,
+# define a `skills` list in that agent's `config.yaml` (e.g. `agents/my-agent/config.yaml`):
+# - Omitted or null: load all globally enabled skills (default)
+# - []: disable all skills for this agent
+# - ["skill-name"]: load only specific skills
 
 # ============================================================================
 # Title Generation Configuration
