@@ -10,11 +10,10 @@ import threading
 from typing import Any, Literal
 
 from app.channels.base import Channel
+from app.channels.commands import KNOWN_CHANNEL_COMMANDS
 from app.channels.message_bus import InboundMessage, InboundMessageType, MessageBus, OutboundMessage, ResolvedAttachment
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
-from app.channels.commands import KNOWN_CHANNEL_COMMANDS
-from app.channels.message_bus import InboundMessageType, MessageBus, OutboundMessage, ResolvedAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +347,9 @@ class FeishuChannel(Channel):
         paths.ensure_thread_dirs(thread_id)
         uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
 
-        raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
+        ext = "png" if type == "image" else "bin"
+        raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.{ext}"
+
         # Sanitize filename: preserve extension, replace path chars in name part
         if "." in raw_filename:
             name_part, ext = raw_filename.rsplit(".", 1)
@@ -591,10 +592,10 @@ class FeishuChannel(Channel):
             # Parse message content
             content = json.loads(message.content)
 
+            # files_list store the any-file-key in feishu messages, which can be used to download the file content later
             # In Feishu channel, image_keys are independent of file_keys.
-            image_keys: list[str] = []
             # The file_key includes files, videos, and audio, but does not include stickers.
-            file_keys: list[str] = []
+            files_list = []
 
             if "text" in content:
                 # Handle plain text messages
@@ -602,14 +603,14 @@ class FeishuChannel(Channel):
             elif "file_key" in content:
                 file_key = content.get("file_key")
                 if isinstance(file_key, str) and file_key:
-                    file_keys.append(file_key)
+                    files_list.append({"file_key": file_key})
                     text = "[file]"
                 else:
                     text = ""
             elif "image_key" in content:
                 image_key = content.get("image_key")
                 if isinstance(image_key, str) and image_key:
-                    image_keys.append(image_key)
+                    files_list.append({"image_key": image_key})
                     text = "[image]"
                 else:
                     text = ""
@@ -629,12 +630,12 @@ class FeishuChannel(Channel):
                                 elif element.get("tag") == "img":
                                     image_key = element.get("image_key")
                                     if isinstance(image_key, str) and image_key:
-                                        image_keys.append(image_key)
+                                        files_list.append({"image_key": image_key})
                                         paragraph_text_parts.append("[image]")
                                 elif element.get("tag") in ("file", "media"):
                                     file_key = element.get("file_key")
                                     if isinstance(file_key, str) and file_key:
-                                        file_keys.append(file_key)
+                                        files_list.append({"file_key": file_key})
                                         paragraph_text_parts.append("[file]")
                         if paragraph_text_parts:
                             # Join text segments within a paragraph with spaces to avoid "helloworld"
@@ -655,7 +656,7 @@ class FeishuChannel(Channel):
                 text[:100] if text else "",
             )
 
-            if not (text or image_keys or file_keys):
+            if not (text or files_list):
                 logger.info("[Feishu] empty text, ignoring message")
                 return
 
@@ -675,7 +676,7 @@ class FeishuChannel(Channel):
                 text=text,
                 msg_type=msg_type,
                 thread_ts=msg_id,
-                files=[{"image_key": key} for key in image_keys] + [{"file_key": key} for key in file_keys],
+                files=files_list,
                 metadata={"message_id": msg_id, "root_id": root_id},
             )
             inbound.topic_id = topic_id
