@@ -282,110 +282,6 @@ class FeishuChannel(Channel):
             raise RuntimeError(f"Feishu file upload failed: code={response.code}, msg={response.msg}")
         return response.data.file_key
 
-    async def receive_file(self, msg: InboundMessage, thread_id: str) -> InboundMessage:
-        """Download a Feishu file into the thread uploads directory.
-
-        Returns the sandbox virtual path when the image is persisted successfully.
-        """
-        if not msg.thread_ts:
-            logger.warning("[Feishu] received file message without thread_ts, cannot associate with conversation: %s", msg)
-            return msg
-        files = msg.files
-        if not files:
-            logger.warning("[Feishu] received message with no files: %s", msg)
-            return msg
-        text = msg.text
-        for file in files:
-            if file.get("image_key"):
-                virtual_path = await self._receive_single_file(msg.thread_ts, file["image_key"], "image", thread_id)
-                text = text.replace("[image]", virtual_path, 1)
-            elif file.get("file_key"):
-                virtual_path = await self._receive_single_file(msg.thread_ts, file["file_key"], "file", thread_id)
-                text = text.replace("[file]", virtual_path, 1)
-        msg.text = text
-        return msg
-
-    async def _receive_single_file(self, message_id: str, file_key: str, type: Literal["image", "file"], thread_id: str) -> str:
-        request = self._GetMessageResourceRequest.builder().message_id(message_id).file_key(file_key).type(type).build()
-
-        def inner():
-            return self._api_client.im.v1.message_resource.get(request)
-
-        try:
-            response = await asyncio.to_thread(inner)
-        except Exception:
-            logger.exception("[Feishu] resource get request failed for resource_key=%s type=%s", file_key, type)
-            return f"Failed to obtain the [{type}]"
-
-        if not response.success():
-            logger.warning(
-                "[Feishu] resource get failed: resource_key=%s, type=%s, code=%s, msg=%s, log_id=%s ",
-                file_key,
-                type,
-                response.code,
-                response.msg,
-                response.get_log_id(),
-            )
-            return f"Failed to obtain the [{type}]"
-
-        image_stream = getattr(response, "file", None)
-        if image_stream is None:
-            logger.warning("[Feishu] resource get returned no file stream: resource_key=%s, type=%s", file_key, type)
-            return f"Failed to obtain the [{type}]"
-
-        try:
-            content: bytes = await asyncio.to_thread(image_stream.read)
-        except Exception:
-            logger.exception("[Feishu] failed to read resource stream: resource_key=%s, type=%s", file_key, type)
-            return f"Failed to obtain the [{type}]"
-
-        if not content:
-            logger.warning("[Feishu] empty resource content: resource_key=%s, type=%s", file_key, type)
-            return f"Failed to obtain the [{type}]"
-
-        paths = get_paths()
-        paths.ensure_thread_dirs(thread_id)
-        uploads_dir = paths.sandbox_uploads_dir(thread_id).resolve()
-
-        raw_filename = getattr(response, "file_name", "") or f"feishu_{file_key[-12:]}.png"
-        # Sanitize filename: preserve extension, replace path chars in name part
-        if "." in raw_filename:
-            name_part, ext = raw_filename.rsplit(".", 1)
-            name_part = re.sub(r"[./\\]", "_", name_part)
-            filename = f"{name_part}.{ext}"
-        else:
-            filename = re.sub(r"[./\\]", "_", raw_filename)
-        resolved_target = uploads_dir / filename
-
-        def down_load():
-            # use thread_lock to avoid filename conflicts when writing
-            with self._thread_lock:
-                resolved_target.write_bytes(content)
-
-        try:
-            await asyncio.to_thread(down_load)
-        except Exception:
-            logger.exception("[Feishu] failed to persist downloaded resource: %s, type=%s", resolved_target, type)
-            return f"Failed to obtain the [{type}]"
-
-        virtual_path = f"{VIRTUAL_PATH_PREFIX}/uploads/{resolved_target.name}"
-
-        try:
-            sandbox_provider = get_sandbox_provider()
-            sandbox_id = sandbox_provider.acquire(thread_id)
-            if sandbox_id != "local":
-                sandbox = sandbox_provider.get(sandbox_id)
-                if sandbox is None:
-                    logger.warning("[Feishu] sandbox not found for thread_id=%s", thread_id)
-                    return f"Failed to obtain the [{type}]"
-                sandbox.update_file(virtual_path, content)
-        except Exception:
-            logger.exception("[Feishu] failed to sync resource into non-local sandbox: %s", virtual_path)
-            return f"Failed to obtain the [{type}]"
-
-        logger.info("[Feishu] downloaded resource mapped: file_key=%s -> %s", file_key, virtual_path)
-        return virtual_path
-
     # -- message formatting ------------------------------------------------
 
     @staticmethod
@@ -590,28 +486,9 @@ class FeishuChannel(Channel):
             # Parse message content
             content = json.loads(message.content)
 
-            # In Feishu channel, image_keys are independent of file_keys.
-            image_keys: list[str] = []
-            # The file_key includes files, videos, and audio, but does not include stickers.
-            file_keys: list[str] = []
-
             if "text" in content:
                 # Handle plain text messages
                 text = content["text"]
-            elif "file_key" in content:
-                file_key = content.get("file_key")
-                if isinstance(file_key, str) and file_key:
-                    file_keys.append(file_key)
-                    text = "[file]"
-                else:
-                    text = ""
-            elif "image_key" in content:
-                image_key = content.get("image_key")
-                if isinstance(image_key, str) and image_key:
-                    image_keys.append(image_key)
-                    text = "[image]"
-                else:
-                    text = ""
             elif "content" in content and isinstance(content["content"], list):
                 # Handle rich-text messages with a top-level "content" list (e.g., topic groups/posts)
                 text_paragraphs: list[str] = []
@@ -625,16 +502,6 @@ class FeishuChannel(Channel):
                                     text_value = element.get("text", "")
                                     if text_value:
                                         paragraph_text_parts.append(text_value)
-                                elif element.get("tag") == "img":
-                                    image_key = element.get("image_key")
-                                    if isinstance(image_key, str) and image_key:
-                                        image_keys.append(image_key)
-                                        paragraph_text_parts.append("[image]")
-                                elif element.get("tag") in ("file", "media"):
-                                    file_key = element.get("file_key")
-                                    if isinstance(file_key, str) and file_key:
-                                        file_keys.append(file_key)
-                                        paragraph_text_parts.append("[file]")
                         if paragraph_text_parts:
                             # Join text segments within a paragraph with spaces to avoid "helloworld"
                             text_paragraphs.append(" ".join(paragraph_text_parts))
@@ -654,7 +521,7 @@ class FeishuChannel(Channel):
                 text[:100] if text else "",
             )
 
-            if not (text or image_keys or file_keys):
+            if not text:
                 logger.info("[Feishu] empty text, ignoring message")
                 return
 
@@ -674,7 +541,6 @@ class FeishuChannel(Channel):
                 text=text,
                 msg_type=msg_type,
                 thread_ts=msg_id,
-                files=[{"image_key": key} for key in image_keys] + [{"file_key": key} for key in file_keys],
                 metadata={"message_id": msg_id, "root_id": root_id},
             )
             inbound.topic_id = topic_id
