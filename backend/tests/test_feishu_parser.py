@@ -106,6 +106,38 @@ def test_feishu_receive_file_replaces_placeholders_in_order():
 def test_feishu_on_message_extracts_image_and_file_keys():
     bus = MessageBus()
     channel = FeishuChannel(bus, {"app_id": "test", "app_secret": "test"})
+
+    event = MagicMock()
+    event.event.message.chat_id = "chat_1"
+    event.event.message.message_id = "msg_1"
+    event.event.message.root_id = None
+    event.event.sender.sender_id.open_id = "user_1"
+
+    # Rich text with one image and one file element.
+    event.event.message.content = json.dumps(
+        {
+            "content": [
+                [
+                    {"tag": "text", "text": "See"},
+                    {"tag": "img", "image_key": "img_123"},
+                    {"tag": "file", "file_key": "file_456"},
+                ]
+            ]
+        }
+    )
+
+    with pytest.MonkeyPatch.context() as m:
+        mock_make_inbound = MagicMock()
+        m.setattr(channel, "_make_inbound", mock_make_inbound)
+        channel._on_message(event)
+
+        mock_make_inbound.assert_called_once()
+        files = mock_make_inbound.call_args[1]["files"]
+        assert files == [{"image_key": "img_123"}, {"file_key": "file_456"}]
+        assert "[image]" in mock_make_inbound.call_args[1]["text"]
+        assert "[file]" in mock_make_inbound.call_args[1]["text"]
+
+
 @pytest.mark.parametrize("command", sorted(KNOWN_CHANNEL_COMMANDS))
 def test_feishu_recognizes_all_known_slash_commands(command):
     """Every entry in KNOWN_CHANNEL_COMMANDS must be classified as a command."""
@@ -149,19 +181,6 @@ def test_feishu_treats_unknown_slash_text_as_chat(text):
     event.event.message.message_id = "msg_1"
     event.event.message.root_id = None
     event.event.sender.sender_id.open_id = "user_1"
-
-    # Rich text with one image and one file element.
-    event.event.message.content = json.dumps(
-        {
-            "content": [
-                [
-                    {"tag": "text", "text": "See"},
-                    {"tag": "img", "image_key": "img_123"},
-                    {"tag": "file", "file_key": "file_456"},
-                ]
-            ]
-        }
-    )
     event.event.message.content = json.dumps({"text": text})
 
     with pytest.MonkeyPatch.context() as m:
@@ -170,8 +189,4 @@ def test_feishu_treats_unknown_slash_text_as_chat(text):
         channel._on_message(event)
 
         mock_make_inbound.assert_called_once()
-        files = mock_make_inbound.call_args[1]["files"]
-        assert files == [{"image_key": "img_123"}, {"file_key": "file_456"}]
-        assert "[image]" in mock_make_inbound.call_args[1]["text"]
-        assert "[file]" in mock_make_inbound.call_args[1]["text"]
         assert mock_make_inbound.call_args[1]["msg_type"].value == "chat", f"{text!r} should be classified as CHAT"
