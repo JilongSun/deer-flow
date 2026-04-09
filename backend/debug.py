@@ -52,7 +52,7 @@ async def main():
         }
     }
 
-    agent = make_lead_agent(config)
+    agent = await make_lead_agent(config)
 
     print("=" * 50)
     print("Lead Agent Debug Mode")

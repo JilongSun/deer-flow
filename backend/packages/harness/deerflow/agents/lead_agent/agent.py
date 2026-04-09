@@ -275,7 +275,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
     return middlewares
 
 
-def make_lead_agent(config: RunnableConfig):
+async def make_lead_agent(config: RunnableConfig):
     # Lazy import to avoid circular dependency
     from deerflow.tools import get_available_tools
     from deerflow.tools.builtins import setup_agent

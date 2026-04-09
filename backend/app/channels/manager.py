@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import httpx
+from langgraph_sdk._async.client import LangGraphClient
 from langgraph_sdk.errors import ConflictError
 
 from app.channels.commands import KNOWN_CHANNEL_COMMANDS
@@ -559,7 +560,7 @@ class ChannelManager:
 
     # -- LangGraph SDK client (lazy) ----------------------------------------
 
-    def _get_client(self):
+    def _get_client(self) -> LangGraphClient:
         """Return the ``langgraph_sdk`` async client, creating it on first use."""
         if self._client is None:
             from langgraph_sdk import get_client
@@ -746,7 +747,7 @@ class ChannelManager:
 
     async def _handle_streaming_chat(
         self,
-        client,
+        client: LangGraphClient,
         msg: InboundMessage,
         thread_id: str,
         assistant_id: str,

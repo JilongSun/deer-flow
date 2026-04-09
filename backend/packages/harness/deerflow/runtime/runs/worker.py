@@ -16,6 +16,7 @@ internal checkpoint callbacks that are not exposed in the Python public API.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Any, Literal
 
@@ -98,7 +99,12 @@ async def run_agent(
         config.setdefault("configurable", {})["__pregel_runtime"] = runtime
 
         runnable_config = RunnableConfig(**config)
-        agent = agent_factory(config=runnable_config)
+
+        # 判断 agent_factory 是否为异步函数
+        if inspect.iscoroutinefunction(agent_factory):
+            agent = await agent_factory(config=runnable_config)
+        else:
+            agent = agent_factory(config=runnable_config)
 
         # 4. Attach checkpointer and store
         if checkpointer is not None:
