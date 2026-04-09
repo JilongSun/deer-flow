@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import NotRequired, override
 
@@ -90,6 +91,31 @@ class ThreadDataMiddleware(AgentMiddleware[ThreadDataMiddlewareState]):
         else:
             # Eager initialization: create directories immediately
             paths = self._create_thread_directories(thread_id)
+            logger.debug("Created thread data directories for thread %s", thread_id)
+
+        return {
+            "thread_data": {
+                **paths,
+            }
+        }
+
+    @override
+    async def abefore_agent(self, state: ThreadDataMiddlewareState, runtime: Runtime) -> dict | None:
+        """Async version of :meth:`before_agent`."""
+        context = runtime.context or {}
+        thread_id = context.get("thread_id")
+        if thread_id is None:
+            config = get_config()
+            thread_id = config.get("configurable", {}).get("thread_id")
+
+        if thread_id is None:
+            raise ValueError("Thread ID is required in runtime context or config.configurable")
+
+        if self._lazy_init:
+            paths = self._get_thread_paths(thread_id)
+        else:
+            await asyncio.to_thread(self._paths.ensure_thread_dirs, thread_id)
+            paths = self._get_thread_paths(thread_id)
             logger.debug("Created thread data directories for thread %s", thread_id)
 
         return {

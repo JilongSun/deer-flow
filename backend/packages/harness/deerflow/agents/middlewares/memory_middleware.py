@@ -246,3 +246,49 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         )
 
         return None
+
+    @override
+    async def aafter_agent(self, state: MemoryMiddlewareState, runtime: Runtime) -> dict | None:
+        """Async version of :meth:`after_agent`.
+
+        The logic is identical (no blocking I/O), but providing an explicit
+        async override lets the LangGraph ``RunnableCallable`` dispatch to
+        async without wrapping the sync version.
+        """
+        config = get_memory_config()
+        if not config.enabled:
+            return None
+
+        thread_id = runtime.context.get("thread_id") if runtime.context else None
+        if thread_id is None:
+            config_data = get_config()
+            thread_id = config_data.get("configurable", {}).get("thread_id")
+        if not thread_id:
+            logger.debug("No thread_id in context, skipping memory update")
+            return None
+
+        messages = state.get("messages", [])
+        if not messages:
+            logger.debug("No messages in state, skipping memory update")
+            return None
+
+        filtered_messages = _filter_messages_for_memory(messages)
+
+        user_messages = [m for m in filtered_messages if getattr(m, "type", None) == "human"]
+        assistant_messages = [m for m in filtered_messages if getattr(m, "type", None) == "ai"]
+
+        if not user_messages or not assistant_messages:
+            return None
+
+        correction_detected = detect_correction(filtered_messages)
+        reinforcement_detected = not correction_detected and detect_reinforcement(filtered_messages)
+        queue = get_memory_queue()
+        queue.add(
+            thread_id=thread_id,
+            messages=filtered_messages,
+            agent_name=self._agent_name,
+            correction_detected=correction_detected,
+            reinforcement_detected=reinforcement_detected,
+        )
+
+        return None

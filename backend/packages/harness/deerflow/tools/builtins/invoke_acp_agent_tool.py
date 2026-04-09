@@ -49,6 +49,27 @@ def _get_work_dir(thread_id: str | None) -> str:
     return str(work_dir)
 
 
+async def _aget_work_dir(thread_id: str | None) -> str:
+    """Async version of :func:`_get_work_dir`."""
+    import anyio
+
+    from deerflow.config.paths import get_paths
+
+    paths = get_paths()
+    if thread_id:
+        try:
+            work_dir = paths.acp_workspace_dir(thread_id)
+        except ValueError:
+            logger.warning("Invalid thread_id %r for ACP workspace, falling back to global", thread_id)
+            work_dir = paths.base_dir / "acp-workspace"
+    else:
+        work_dir = paths.base_dir / "acp-workspace"
+
+    await anyio.Path(work_dir).mkdir(parents=True, exist_ok=True)
+    logger.info("ACP agent work_dir: %s", work_dir)
+    return str(work_dir)
+
+
 def _build_mcp_servers() -> dict[str, dict[str, Any]]:
     """Build ACP ``mcpServers`` config from DeerFlow's enabled MCP servers."""
     from deerflow.config.extensions_config import ExtensionsConfig
@@ -208,7 +229,7 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
         client = _CollectingClient()
         cmd = agent_config.command
         args = agent_config.args or []
-        physical_cwd = _get_work_dir(thread_id)
+        physical_cwd = await _aget_work_dir(thread_id)
         try:
             mcp_servers = _build_acp_mcp_servers()
         except ValueError as exc:

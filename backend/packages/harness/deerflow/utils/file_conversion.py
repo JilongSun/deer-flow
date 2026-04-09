@@ -286,6 +286,51 @@ def extract_outline(md_path: Path) -> list[dict]:
     return outline
 
 
+async def async_extract_outline(md_path: Path) -> list[dict]:
+    """Async version of :func:`extract_outline`.
+
+    Uses ``aiofiles`` for non-blocking file I/O so it can be awaited inside
+    middleware ``abefore_agent`` hooks without blocking the event loop.
+    """
+    import aiofiles
+
+    outline: list[dict] = []
+    try:
+        async with aiofiles.open(md_path, encoding="utf-8") as f:
+            lineno = 0
+            async for line in f:
+                lineno += 1
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # Style 1: standard Markdown heading
+                if stripped.startswith("#"):
+                    title = _clean_bold_title(stripped.lstrip("#").strip())
+                    if title:
+                        outline.append({"title": title, "line": lineno})
+
+                # Style 2: single bold block with SEC structural keyword
+                elif m := _BOLD_HEADING_RE.match(stripped):
+                    title = m.group(1).strip()
+                    if title:
+                        outline.append({"title": title, "line": lineno})
+
+                # Style 3: split-bold heading
+                elif _SPLIT_BOLD_HEADING_RE.match(stripped):
+                    title = " ".join(re.findall(r"\*\*([^*]+)\*\*", stripped))
+                    if title:
+                        outline.append({"title": title, "line": lineno})
+
+                if len(outline) >= MAX_OUTLINE_ENTRIES:
+                    outline.append({"truncated": True})
+                    break
+    except Exception:
+        return []
+
+    return outline
+
+
 def _get_pdf_converter() -> str:
     """Read pdf_converter setting from app config, defaulting to 'auto'.
 

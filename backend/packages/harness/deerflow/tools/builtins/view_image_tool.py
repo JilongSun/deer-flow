@@ -3,6 +3,8 @@ import mimetypes
 from pathlib import Path
 from typing import Annotated
 
+import aiofiles
+import anyio
 from langchain.tools import InjectedToolCallId, ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
@@ -12,7 +14,7 @@ from deerflow.agents.thread_state import ThreadState
 
 
 @tool("view_image", parse_docstring=True)
-def view_image_tool(
+async def view_image_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     image_path: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
@@ -45,14 +47,16 @@ def view_image_tool(
             update={"messages": [ToolMessage(f"Error: Path must be absolute, got: {image_path}", tool_call_id=tool_call_id)]},
         )
 
+    apath = anyio.Path(path)
+
     # Validate that the file exists
-    if not path.exists():
+    if not await apath.exists():
         return Command(
             update={"messages": [ToolMessage(f"Error: Image file not found: {image_path}", tool_call_id=tool_call_id)]},
         )
 
     # Validate that it's a file (not a directory)
-    if not path.is_file():
+    if not await apath.is_file():
         return Command(
             update={"messages": [ToolMessage(f"Error: Path is not a file: {image_path}", tool_call_id=tool_call_id)]},
         )
@@ -78,8 +82,8 @@ def view_image_tool(
 
     # Read image file and convert to base64
     try:
-        with open(actual_path, "rb") as f:
-            image_data = f.read()
+        async with aiofiles.open(actual_path, "rb") as f:
+            image_data = await f.read()
             image_base64 = base64.b64encode(image_data).decode("utf-8")
     except Exception as e:
         return Command(

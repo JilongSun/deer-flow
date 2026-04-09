@@ -4,13 +4,14 @@ import logging
 from pathlib import Path
 from typing import NotRequired, override
 
+import anyio
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
 from deerflow.config.paths import Paths, get_paths
-from deerflow.utils.file_conversion import extract_outline
+from deerflow.utils.file_conversion import async_extract_outline, extract_outline
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,38 @@ def _extract_outline_for_file(file_path: Path) -> tuple[list[dict], list[str]]:
     try:
         with md_path.open(encoding="utf-8") as f:
             for line in f:
+                stripped = line.strip()
+                if stripped:
+                    preview.append(stripped)
+                if len(preview) >= _OUTLINE_PREVIEW_LINES:
+                    break
+    except Exception:
+        logger.debug("Failed to read preview lines from %s", md_path, exc_info=True)
+    return [], preview
+
+
+async def _aextract_outline_for_file(file_path: Path) -> tuple[list[dict], list[str]]:
+    """Async version of :func:`_extract_outline_for_file`.
+
+    Uses ``anyio.Path`` for filesystem checks and ``aiofiles`` (via
+    ``async_extract_outline``) for non-blocking file reads.
+    """
+    import aiofiles
+
+    md_path = file_path.with_suffix(".md")
+    if not await anyio.Path(md_path).is_file():
+        return [], []
+
+    outline = await async_extract_outline(md_path)
+    if outline:
+        logger.debug("Extracted %d outline entries from %s", len(outline), file_path.name)
+        return outline, []
+
+    # outline is empty — read the first few non-empty lines as a content preview
+    preview: list[str] = []
+    try:
+        async with aiofiles.open(md_path, encoding="utf-8") as f:
+            async for line in f:
                 stripped = line.strip()
                 if stripped:
                     preview.append(stripped)
@@ -275,6 +308,119 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         # Create new message with combined content.
         # Preserve additional_kwargs (including files metadata) so the frontend
         # can read structured file info from the streamed message.
+        updated_message = HumanMessage(
+            content=f"{files_message}\n\n{original_content}",
+            id=last_message.id,
+            additional_kwargs=last_message.additional_kwargs,
+        )
+
+        messages[last_message_index] = updated_message
+
+        return {
+            "uploaded_files": new_files,
+            "messages": messages,
+        }
+
+    async def _afiles_from_kwargs(self, message: HumanMessage, uploads_dir: Path | None = None) -> list[dict] | None:
+        """Async version of :meth:`_files_from_kwargs`."""
+        kwargs_files = (message.additional_kwargs or {}).get("files")
+        if not isinstance(kwargs_files, list) or not kwargs_files:
+            return None
+
+        files = []
+        for f in kwargs_files:
+            if not isinstance(f, dict):
+                continue
+            filename = f.get("filename") or ""
+            if not filename or Path(filename).name != filename:
+                continue
+            if uploads_dir is not None and not await anyio.Path(uploads_dir / filename).is_file():
+                continue
+            files.append(
+                {
+                    "filename": filename,
+                    "size": int(f.get("size") or 0),
+                    "path": f"/mnt/user-data/uploads/{filename}",
+                    "extension": Path(filename).suffix,
+                }
+            )
+        return files if files else None
+
+    @override
+    async def abefore_agent(self, state: UploadsMiddlewareState, runtime: Runtime) -> dict | None:
+        """Async version of :meth:`before_agent`."""
+        messages = list(state.get("messages", []))
+        if not messages:
+            return None
+
+        last_message_index = len(messages) - 1
+        last_message = messages[last_message_index]
+
+        if not isinstance(last_message, HumanMessage):
+            return None
+
+        # Resolve uploads directory for existence checks
+        thread_id = (runtime.context or {}).get("thread_id")
+        if thread_id is None:
+            try:
+                from langgraph.config import get_config
+
+                thread_id = get_config().get("configurable", {}).get("thread_id")
+            except RuntimeError:
+                pass
+        uploads_dir = self._paths.sandbox_uploads_dir(thread_id) if thread_id else None
+
+        # Get newly uploaded files from the current message's additional_kwargs.files
+        new_files = await self._afiles_from_kwargs(last_message, uploads_dir) or []
+
+        # Collect historical files from the uploads directory (all except the new ones)
+        new_filenames = {f["filename"] for f in new_files}
+        historical_files: list[dict] = []
+        if uploads_dir and await anyio.Path(uploads_dir).exists():
+            # dir_entries = [Path(p) for p in await anyio.Path(uploads_dir).iterdir()]
+            dir_entries = [Path(p) async for p in anyio.Path(uploads_dir).iterdir()]
+            for file_path in sorted(dir_entries):
+                if await anyio.Path(file_path).is_file() and file_path.name not in new_filenames:
+                    stat = await anyio.Path(file_path).stat()
+                    outline, preview = await _aextract_outline_for_file(file_path)
+                    historical_files.append(
+                        {
+                            "filename": file_path.name,
+                            "size": stat.st_size,
+                            "path": f"/mnt/user-data/uploads/{file_path.name}",
+                            "extension": file_path.suffix,
+                            "outline": outline,
+                            "outline_preview": preview,
+                        }
+                    )
+
+        # Attach outlines to new files as well
+        if uploads_dir:
+            for file in new_files:
+                phys_path = uploads_dir / file["filename"]
+                outline, preview = await _aextract_outline_for_file(phys_path)
+                file["outline"] = outline
+                file["outline_preview"] = preview
+
+        if not new_files and not historical_files:
+            return None
+
+        logger.debug(f"New files: {[f['filename'] for f in new_files]}, historical: {[f['filename'] for f in historical_files]}")
+
+        # Create files message and prepend to the last human message content
+        files_message = self._create_files_message(new_files, historical_files)
+
+        # Extract original content - handle both string and list formats
+        original_content = ""
+        if isinstance(last_message.content, str):
+            original_content = last_message.content
+        elif isinstance(last_message.content, list):
+            text_parts = []
+            for block in last_message.content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+            original_content = "\n".join(text_parts)
+
         updated_message = HumanMessage(
             content=f"{files_message}\n\n{original_content}",
             id=last_message.id,
