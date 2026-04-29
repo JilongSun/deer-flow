@@ -1,10 +1,12 @@
 """Middleware for automatic thread title generation."""
 
 import logging
-from typing import NotRequired, override
+import re
+from typing import Any, NotRequired, override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from deerflow.config.title_config import get_title_config
@@ -77,7 +79,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         assistant_msg_content = next((m.content for m in messages if m.type == "ai"), "")
 
         user_msg = self._normalize_content(user_msg_content)
-        assistant_msg = self._normalize_content(assistant_msg_content)
+        assistant_msg = self._strip_think_tags(self._normalize_content(assistant_msg_content))
 
         prompt = config.prompt_template.format(
             max_words=config.max_words,
@@ -86,10 +88,15 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         )
         return prompt, user_msg
 
+    def _strip_think_tags(self, text: str) -> str:
+        """Remove <think>...</think> blocks emitted by reasoning models (e.g. minimax, DeepSeek-R1)."""
+        return re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
+
     def _parse_title(self, content: object) -> str:
         """Normalize model output into a clean title string."""
         config = get_title_config()
         title_content = self._normalize_content(content)
+        title_content = self._strip_think_tags(title_content)
         title = title_content.strip().strip('"').strip("'")
         return title[: config.max_chars] if len(title) > config.max_chars else title
 
@@ -99,6 +106,21 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         if len(user_msg) > fallback_chars:
             return user_msg[:fallback_chars].rstrip() + "..."
         return user_msg if user_msg else "New Conversation"
+
+    def _get_runnable_config(self) -> dict[str, Any]:
+        """Inherit the parent RunnableConfig and add middleware tag.
+
+        This ensures RunJournal identifies LLM calls from this middleware
+        as ``middleware:title`` instead of ``lead_agent``.
+        """
+        try:
+            parent = get_config()
+        except Exception:
+            parent = {}
+        config = {**parent}
+        config["run_name"] = "title_agent"
+        config["tags"] = [*(config.get("tags") or []), "middleware:title"]
+        return config
 
     def _generate_title_result(self, state: TitleMiddlewareState) -> dict | None:
         """Generate a local fallback title without blocking on an LLM call."""
@@ -121,7 +143,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
                 model = create_chat_model(name=config.model_name, thinking_enabled=False)
             else:
                 model = create_chat_model(thinking_enabled=False)
-            response = await model.ainvoke(prompt)
+            response = await model.ainvoke(prompt, config=self._get_runnable_config())
             title = self._parse_title(response.content)
             if title:
                 return {"title": title}

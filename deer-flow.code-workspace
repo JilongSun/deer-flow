@@ -6,6 +6,7 @@
   ],
   "settings": {
     "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+    "js/ts.tsdk.path": "frontend/node_modules/typescript/lib",
     "python-envs.pythonProjects": [
       {
         "path": "backend",

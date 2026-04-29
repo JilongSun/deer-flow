@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
 from deerflow.config.paths import Paths, get_paths
+from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.utils.file_conversion import async_extract_outline, extract_outline
 
 logger = logging.getLogger(__name__)
@@ -254,7 +255,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 thread_id = get_config().get("configurable", {}).get("thread_id")
             except RuntimeError:
                 pass  # get_config() raises outside a runnable context (e.g. unit tests)
-        uploads_dir = self._paths.sandbox_uploads_dir(thread_id) if thread_id else None
+        uploads_dir = self._paths.sandbox_uploads_dir(thread_id, user_id=get_effective_user_id()) if thread_id else None
 
         # Get newly uploaded files from the current message's additional_kwargs.files
         new_files = self._files_from_kwargs(last_message, uploads_dir) or []
@@ -295,22 +296,27 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         files_message = self._create_files_message(new_files, historical_files)
 
         # Extract original content - handle both string and list formats
-        original_content = ""
-        if isinstance(last_message.content, str):
-            original_content = last_message.content
-        elif isinstance(last_message.content, list):
-            text_parts = []
-            for block in last_message.content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-            original_content = "\n".join(text_parts)
+        original_content = last_message.content
+        if isinstance(original_content, str):
+            # Simple case: string content, just prepend files message
+            updated_content = f"{files_message}\n\n{original_content}"
+        elif isinstance(original_content, list):
+            # Complex case: list content (multimodal), preserve all blocks
+            # Prepend files message as the first text block
+            files_block = {"type": "text", "text": f"{files_message}\n\n"}
+            # Keep all original blocks (including images)
+            updated_content = [files_block, *original_content]
+        else:
+            # Other types, preserve as-is
+            updated_content = original_content
 
         # Create new message with combined content.
         # Preserve additional_kwargs (including files metadata) so the frontend
         # can read structured file info from the streamed message.
         updated_message = HumanMessage(
-            content=f"{files_message}\n\n{original_content}",
+            content=updated_content,
             id=last_message.id,
+            name=last_message.name,
             additional_kwargs=last_message.additional_kwargs,
         )
 
@@ -368,7 +374,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 thread_id = get_config().get("configurable", {}).get("thread_id")
             except RuntimeError:
                 pass
-        uploads_dir = self._paths.sandbox_uploads_dir(thread_id) if thread_id else None
+        uploads_dir = self._paths.sandbox_uploads_dir(thread_id, user_id=get_effective_user_id()) if thread_id else None
 
         # Get newly uploaded files from the current message's additional_kwargs.files
         new_files = await self._afiles_from_kwargs(last_message, uploads_dir) or []
@@ -377,7 +383,6 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         new_filenames = {f["filename"] for f in new_files}
         historical_files: list[dict] = []
         if uploads_dir and await anyio.Path(uploads_dir).exists():
-            # dir_entries = [Path(p) for p in await anyio.Path(uploads_dir).iterdir()]
             dir_entries = [Path(p) async for p in anyio.Path(uploads_dir).iterdir()]
             for file_path in sorted(dir_entries):
                 if await anyio.Path(file_path).is_file() and file_path.name not in new_filenames:
@@ -411,19 +416,24 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         files_message = self._create_files_message(new_files, historical_files)
 
         # Extract original content - handle both string and list formats
-        original_content = ""
-        if isinstance(last_message.content, str):
-            original_content = last_message.content
-        elif isinstance(last_message.content, list):
-            text_parts = []
-            for block in last_message.content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-            original_content = "\n".join(text_parts)
+        original_content = last_message.content
+        if isinstance(original_content, str):
+            # Simple case: string content, just prepend files message
+            updated_content = f"{files_message}\n\n{original_content}"
+        elif isinstance(original_content, list):
+            # Complex case: list content (multimodal), preserve all blocks
+            # Prepend files message as the first text block
+            files_block = {"type": "text", "text": f"{files_message}\n\n"}
+            # Keep all original blocks (including images)
+            updated_content = [files_block, *original_content]
+        else:
+            # Other types, preserve as-is
+            updated_content = original_content
 
         updated_message = HumanMessage(
-            content=f"{files_message}\n\n{original_content}",
+            content=updated_content,
             id=last_message.id,
+            name=last_message.name,
             additional_kwargs=last_message.additional_kwargs,
         )
 
