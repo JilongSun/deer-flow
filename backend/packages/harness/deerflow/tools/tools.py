@@ -51,6 +51,7 @@ def get_available_tools(
         include_mcp: Whether to include tools from MCP servers (default: True).
         model_name: Optional model name to determine if vision tools should be included.
         subagent_enabled: Whether to include subagent tools (task, task_status).
+        mcp_sync_invocation: Whether MCP tools should be patched for sync invocation.
 
     Returns:
         List of available tools.
@@ -117,7 +118,7 @@ def get_available_tools(
 
             extensions_config = ExtensionsConfig.from_file()
             if extensions_config.get_enabled_mcp_servers():
-                mcp_tools = get_cached_mcp_tools()
+                mcp_tools = get_cached_mcp_tools(sync_invocation=mcp_sync_invocation)
                 if mcp_tools:
                     logger.info(f"Using {len(mcp_tools)} cached MCP tool(s)")
 

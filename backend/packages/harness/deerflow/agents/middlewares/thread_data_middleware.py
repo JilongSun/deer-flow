@@ -108,7 +108,7 @@ class ThreadDataMiddleware(AgentMiddleware[ThreadDataMiddlewareState]):
                 content=last_message.content,
                 id=last_message.id,
                 name=last_message.name or "user-input",
-                additional_kwargs={**last_message.additional_kwargs, "run_id": runtime.context.get("run_id"), "timestamp": datetime.now(UTC).isoformat()},
+                additional_kwargs={**last_message.additional_kwargs, "run_id": context.get("run_id"), "timestamp": datetime.now(UTC).isoformat()},
             )
 
         return {
@@ -130,15 +130,29 @@ class ThreadDataMiddleware(AgentMiddleware[ThreadDataMiddlewareState]):
         if thread_id is None:
             raise ValueError("Thread ID is required in runtime context or config.configurable")
 
+        user_id = get_effective_user_id()
+
         if self._lazy_init:
-            paths = self._get_thread_paths(thread_id)
+            paths = self._get_thread_paths(thread_id, user_id=user_id)
         else:
-            await asyncio.to_thread(self._paths.ensure_thread_dirs, thread_id)
-            paths = self._get_thread_paths(thread_id)
+            await asyncio.to_thread(self._paths.ensure_thread_dirs, thread_id, user_id=user_id)
+            paths = self._get_thread_paths(thread_id, user_id=user_id)
             logger.debug("Created thread data directories for thread %s", thread_id)
+
+        messages = list(state.get("messages", []))
+        last_message = messages[-1] if messages else None
+
+        if last_message and isinstance(last_message, HumanMessage):
+            messages[-1] = HumanMessage(
+                content=last_message.content,
+                id=last_message.id,
+                name=last_message.name or "user-input",
+                additional_kwargs={**last_message.additional_kwargs, "run_id": context.get("run_id"), "timestamp": datetime.now(UTC).isoformat()},
+            )
 
         return {
             "thread_data": {
                 **paths,
-            }
+            },
+            "messages": messages,
         }

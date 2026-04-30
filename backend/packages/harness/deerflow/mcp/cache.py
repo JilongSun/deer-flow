@@ -1,8 +1,10 @@
 """Cache for MCP tools to avoid repeated loading."""
 
 import asyncio
+import copy
 import logging
 import os
+from typing import cast
 
 from langchain_core.tools import BaseTool
 
@@ -79,7 +81,27 @@ async def initialize_mcp_tools() -> list[BaseTool]:
         return _mcp_tools_cache
 
 
-def get_cached_mcp_tools() -> list[BaseTool]:
+def _clone_tools_for_runtime(tools: list[BaseTool]) -> list[BaseTool]:
+    """Clone tools so runtime-specific patching does not mutate shared cache."""
+    cloned_tools: list[BaseTool] = []
+    for tool in tools:
+        model_copy = getattr(tool, "model_copy", None)
+        if callable(model_copy):
+            try:
+                cloned_tools.append(cast(BaseTool, model_copy(deep=True)))
+                continue
+            except Exception:
+                logger.debug("model_copy(deep=True) failed for MCP tool '%s', trying deepcopy", getattr(tool, "name", "unknown"))
+
+        try:
+            cloned_tools.append(copy.deepcopy(tool))
+        except Exception:
+            logger.warning("Failed to clone MCP tool '%s'; using shared instance", getattr(tool, "name", "unknown"), exc_info=True)
+            cloned_tools.append(tool)
+    return cloned_tools
+
+
+def get_cached_mcp_tools(*, sync_invocation: bool = False) -> list[BaseTool]:
     """Get cached MCP tools with lazy initialization.
 
     If tools are not initialized, automatically initializes them.
@@ -89,6 +111,11 @@ def get_cached_mcp_tools() -> list[BaseTool]:
     and re-initializes if needed. This ensures that changes made through the
     Gateway API (which runs in a separate process) are reflected in the
     LangGraph Server.
+
+    Args:
+        sync_invocation: Whether returned tools should support sync invocation.
+            When True, returns cloned tools patched with sync wrappers to avoid
+            mutating the shared async cache used by server runtime.
 
     Returns:
         List of cached MCP tools.
@@ -127,7 +154,14 @@ def get_cached_mcp_tools() -> list[BaseTool]:
             logger.exception("Failed to lazy-initialize MCP tools")
             return []
 
-    return _mcp_tools_cache or []
+    tools = _mcp_tools_cache or []
+    if not sync_invocation:
+        return tools
+
+    from deerflow.mcp.tools import patch_mcp_tools_for_sync_invocation
+
+    runtime_tools = _clone_tools_for_runtime(tools)
+    return patch_mcp_tools_for_sync_invocation(runtime_tools)
 
 
 def reset_mcp_tools_cache() -> None:

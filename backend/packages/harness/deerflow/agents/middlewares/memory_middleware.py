@@ -128,7 +128,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
             logger.debug("No messages in state, skipping memory update")
             return None
 
-        filtered_messages = _filter_messages_for_memory(messages)
+        filtered_messages = filter_messages_for_memory(messages)
 
         user_messages = [m for m in filtered_messages if getattr(m, "type", None) == "human"]
         assistant_messages = [m for m in filtered_messages if getattr(m, "type", None) == "ai"]
@@ -138,11 +138,13 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
         correction_detected = detect_correction(filtered_messages)
         reinforcement_detected = not correction_detected and detect_reinforcement(filtered_messages)
+        user_id = get_effective_user_id()
         queue = get_memory_queue()
         queue.add(
             thread_id=thread_id,
             messages=filtered_messages,
             agent_name=self._agent_name,
+            user_id=user_id,
             correction_detected=correction_detected,
             reinforcement_detected=reinforcement_detected,
         )
