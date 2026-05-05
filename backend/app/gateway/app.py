@@ -191,7 +191,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.exception("No IM channels configured or channel service failed to start")
 
+        # Start scheduler service via helper only when scheduler tool is configured.
+        scheduler_tool_config = app.state.config.get_tool_config("schedule")
+        if scheduler_tool_config is not None:
+            from deerflow.community.scheduler.service import start_scheduler_service_with_tool_config
+
+            await start_scheduler_service_with_tool_config(app.state.config)
+
         yield
+
+        # Stop scheduler service first via helper only when scheduler tool is configured.
+        if scheduler_tool_config is not None:
+            from deerflow.community.scheduler.service import stop_scheduler_service_with_timeout
+
+            await stop_scheduler_service_with_timeout(_SHUTDOWN_HOOK_TIMEOUT_SECONDS)
 
         # Stop channel service on shutdown (bounded to prevent worker hang)
         try:

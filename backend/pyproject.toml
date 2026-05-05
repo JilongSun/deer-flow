@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["deerflow-harness[postgres]"]
+scheduler = ["deerflow-harness[scheduler]"]
 
 [dependency-groups]
 dev = [
