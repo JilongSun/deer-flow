@@ -5,14 +5,14 @@ from typing import Annotated
 
 import aiofiles
 import anyio
-from langchain.tools import InjectedToolCallId, ToolRuntime
+from langchain.tools import InjectedToolCallId
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
-from langgraph.typing import ContextT
 
-from deerflow.agents.thread_state import ThreadDataState, ThreadState
+from deerflow.agents.thread_state import ThreadDataState
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
+from deerflow.tools.types import Runtime
 
 _ALLOWED_IMAGE_VIRTUAL_ROOTS = (
     f"{VIRTUAL_PATH_PREFIX}/workspace",
@@ -50,7 +50,7 @@ def _sanitize_image_error(error: Exception, thread_data: ThreadDataState | None)
 
 
 def _view_image_tool(
-    runtime: ToolRuntime[ContextT, ThreadState],
+    runtime: Runtime,
     image_path: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
@@ -158,7 +158,7 @@ def _view_image_tool(
 
 
 async def _aview_image_tool(
-    runtime: ToolRuntime[ContextT, ThreadState],
+    runtime: Runtime,
     image_path: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
